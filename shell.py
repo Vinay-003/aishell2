@@ -507,7 +507,14 @@ def get_setup_commands(setup_request: str) -> List[Dict]:
                     "role": "system",
                     "content": """You are a command-line expert. Generate appropriate commands based on the request and previous command context.
                     Previous commands and their outputs are provided for context.
-                    Return a JSON array of steps needed."""
+                    ALWAYS return response in this exact JSON format:
+                    [
+                        {
+                            "description": "Brief description of what this step does",
+                            "operation": "command",
+                            "content": "the actual command to run"
+                        }
+                    ]"""
                 },
                 {
                     "role": "user",
@@ -518,8 +525,38 @@ def get_setup_commands(setup_request: str) -> List[Dict]:
             temperature=0.1
         )
         
-        response = completion.choices[0].message.content
-        return json.loads(response)
+        response = completion.choices[0].message.content.strip()
+        
+        # Try to extract JSON if it's wrapped in other text
+        try:
+            # Find JSON array in the response
+            json_start = response.find('[')
+            json_end = response.rfind(']') + 1
+            if json_start >= 0 and json_end > json_start:
+                response = response[json_start:json_end]
+            
+            steps = json.loads(response)
+            
+            # Validate the structure of each step
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                if 'operation' not in step or 'content' not in step:
+                    continue
+                if step['operation'] not in ['command', 'file_create', 'file_edit']:
+                    step['operation'] = 'command'
+                if 'description' not in step:
+                    step['description'] = step['content']
+            
+            return steps
+            
+        except json.JSONDecodeError:
+            # If JSON parsing fails, create a simple command step
+            return [{
+                "description": "Execute the following command",
+                "operation": "command",
+                "content": response.strip('`').strip()
+            }]
         
     except Exception as e:
         print(f"Error generating setup commands: {str(e)}")
